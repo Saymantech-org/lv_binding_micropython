@@ -78,3 +78,63 @@ class mouse_indev:
         if self.cursor and hasattr(self.cursor, 'delete'):
             self.cursor.delete()
         self.indev.enable(False)
+
+class ts_indev:
+    def __init__(self, scr=None, device='/dev/input/event0'):
+        
+        self.format = 'llHHI'
+        self.event_size = ustruct.calcsize(self.format)
+
+        # Open evdev and initialize members
+        self.evdev = open(device, 'rb')
+        self.poll = select.poll()
+        self.poll.register(self.evdev.fileno())
+        self.scr = scr if scr else lv.scr_act()
+        self.hor_res = self.scr.get_width()
+        self.ver_res = self.scr.get_height()
+
+        # Register LVGL indev driver
+        self.indev = lv.indev_create()
+        self.indev.set_type(lv.INDEV_TYPE.POINTER)
+        self.indev.set_read_cb(self.ts_read)
+
+        self.state = lv.INDEV_STATE.RELEASED
+
+    def ts_read(self, indev, data) -> int:
+        
+        # Check if there is input to be read from evdev
+        if not self.poll.poll()[0][1] & select.POLLIN:
+            return 0
+
+        
+        event = self.evdev.read(self.event_size)
+        state_updated = False
+        while event:
+            (tv_sec, tv_usec, type, code, value) = ustruct.unpack(self.format, event)
+
+            if type == 0 and code == 0 and value == 0:
+                break
+            
+            elif type == 1 and code == 330:
+                data.state = lv.INDEV_STATE.PRESSED if value == 1 else lv.INDEV_STATE.RELEASED
+                self.state = data.state
+                state_updated = True
+
+            elif type == 3 and code == 0:
+                data.point.x = value
+
+            elif type == 3 and code == 1:
+                data.point.y = value
+
+            event = self.evdev.read(self.event_size)
+
+        if not state_updated:
+            data.state = self.state
+
+        return 0
+
+    def delete(self):
+        self.evdev.close()
+        if self.cursor and hasattr(self.cursor, 'delete'):
+            self.cursor.delete()
+        self.indev.enable(False)
